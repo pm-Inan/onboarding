@@ -1,31 +1,31 @@
 #!/bin/bash
 
 # Anlegen des Root-Users
-root_account_creation() {
+#root_account_creation() {
     # Überprüfen, ob das Skript als Root ausgeführt wird
-    if [ "$EUID" -eq 0 ]; then
-        echo "Dieses Skript sollte nicht als Root-Benutzer ausgeführt werden."
-        exit 1
-    fi
-
+#    if [ "$EUID" -eq 0 ]; then
+#        echo "Dieses Skript sollte nicht als Root-Benutzer ausgeführt werden."
+#        exit 1
+#    fi
+#
     # Benutzernamen festlegen
-    USERNAME="pm-root"
+#    USERNAME="pm-root"
 
     # Passwort vom Benutzer abfragen
-    read -s -p "Geben Sie das Passwort für den Benutzer $USERNAME ein: " PASSWORD
-    echo
+#    read -s -p "Geben Sie das Passwort für den Benutzer $USERNAME ein: " PASSWORD
+#    echo
 
     # Benutzer erstellen und Shell-Zuweisung hinzufügen
-    sudo useradd -m -s /bin/bash $USERNAME
+#    sudo useradd -m -s /bin/bash $USERNAME
 
     # Passwort für den Benutzer festlegen
-    echo "$USERNAME:$PASSWORD" | sudo chpasswd
+#    echo "$USERNAME:$PASSWORD" | sudo chpasswd
 
     # Benutzer zur sudo-Gruppe hinzufügen
-    sudo usermod -aG sudo $USERNAME
+#    sudo usermod -aG sudo $USERNAME
 
-    echo "Der Benutzer $USERNAME wurde erstellt und zur sudo-Gruppe hinzugefügt."
-}
+#    echo "Der Benutzer $USERNAME wurde erstellt und zur sudo-Gruppe hinzugefügt."
+#}
 
 # Preinstall for uninstalled system applications
 install_preinstall(){
