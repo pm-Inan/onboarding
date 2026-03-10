@@ -1,6 +1,7 @@
 # BRIEFING.md – Onboarding SysAdmin
 
 **Erstellt:** 05.03.2026  
+**Zuletzt aktualisiert:** 05.03.2026 (Antworten Mathias Leonhardt eingearbeitet)  
 **Zielgruppe:** Neuer SysAdmin bei P&M Agentur  
 **Zweck:** Schneller Einstieg in die IT-Infrastruktur ohne Vorkenntnisse über das Unternehmen
 
@@ -15,6 +16,22 @@ P&M Agentur hat ihre Server von **Berlin nach Hamburg** umgezogen. Das bedeutet:
 - Die VPN-Infrastruktur, Kunden-Whitelists und Proxy-Configs mussten dafür angepasst werden
 - Dieser Umzug ist **noch nicht vollständig abgeschlossen** – es gibt offene Punkte (siehe Abschnitt 4)
 
+### Geplanter Firewall-Austausch in Hamburg
+
+Der Cisco RV345P wird durch eine **OPNSense DEC3852 Rack Appliance** ersetzt. Hintergrund:
+
+- Der RV345P ist EOL (keine Firmware-Updates mehr) und hat mehrere Hardware-Limitierungen
+- Alle aktuellen Cisco-Modelle erfordern eine kostenpflichtige Subscription (€600–1.000/Jahr)
+- Die DEC3852 hat einmalige Kosten von ~€1.299 + ~€80–100 für einen Managed Switch (da aktuell ~12 Ports am Cisco belegt sind) und keine laufenden Lizenzkosten
+- Phillip hat das Go gegeben – **Bestellung steht jedoch noch aus!**
+- Mauro hat die VPN-Configs bereits auf einer kleinen OPNSense (`192.168.80.59`) vorbereitet und getestet – die Config kann direkt auf die DEC3852 übernommen werden
+- Die Umstellung ist für einen Abend geplant (~1h Downtime, alle VPNs kurz down)
+- Konfiguration erfolgt in Kooperation mit Mauro Altamura, der die Config bereits vorbereitet und getestet hat
+- Nach der Umstellung wird das eingebaute OPNSense-Monitoring für die VPN-Tunnel konfiguriert
+- **Wichtig:** Viele der aktuellen VPN-Probleme (Tyczka nur 1 Netz, Adacor NAT, VPN-Client-Routing) sind Cisco-Limitierungen und erledigen sich mit der neuen OPNSense
+
+**Ansprechpartner für die Umstellung:** Inan Bogisch (Konfiguration), bei Bedarf Leon Schumacher & Mathias Leonhardt.
+
 ---
 
 ## 2. Infrastruktur-Übersicht
@@ -24,7 +41,7 @@ P&M Agentur hat ihre Server von **Berlin nach Hamburg** umgezogen. Das bedeutet:
 | Standort | Gerät | Öffentliche IP | Internes Netz |
 |----------|-------|----------------|---------------|
 | **Berlin** | WatchGuard T70 | `87.234.222.66` | `192.168.1.0/24`, `192.168.2.0/24` |
-| **Hamburg** | Cisco RV345P | `31.172.106.157` | `192.168.80.0/24` (Server), `192.168.81.0/24` (VPN-Clients) |
+| **Hamburg** | Cisco RV345P (→ wird durch OPNSense DEC3852 ersetzt) | `31.172.106.157` | `192.168.80.0/24` (Server), `192.168.81.0/24` (VPN-Clients) |
 | **OMC** (Hoster) | OPNSense | `212.77.230.96` | `10.20.30.0/24` |
 
 > **OMC** ist ein externer Hoster bei dem Kundenprojekte wie DLRG und Hückmann laufen. Die OPNSense dort ist über die normale OPNSense-Weboberfläche erreichbar.
@@ -33,10 +50,11 @@ P&M Agentur hat ihre Server von **Berlin nach Hamburg** umgezogen. Das bedeutet:
 
 | IP | Server | Funktion | Status |
 |----|--------|----------|--------|
-| `192.168.80.26` | DB Server (Alt) | MySQL Datenbank | ⚠ SSH nicht erreichbar |
+| `192.168.80.26` | DB Server (Alt) | MySQL Datenbank | ⚠ SSH nicht erreichbar (MySQL läuft) |
 | `192.168.80.27` | Windows Server | Hyper-V | ✅ Online |
 | `192.168.80.28` | Bürkert Server | MySQL + Bürkert VPN | ✅ Online |
 | `192.168.80.29` | VMware ESXi | Virtualisierung | ✅ Online |
+| `192.168.80.59` | OPNSense (klein) | VPN-Test / Vorbereitung DEC3852 | ℹ Testgerät, wird durch DEC3852 abgelöst |
 | `192.168.80.74` | DEV Server | Apache Reverse-Proxy, MySQL | ✅ Online |
 | `192.168.80.171` | LDAP Server | Verzeichnisdienst | ✅ Online |
 | `192.168.80.240` | FC | MySQL | ✅ Online |
@@ -48,39 +66,37 @@ P&M Agentur hat ihre Server von **Berlin nach Hamburg** umgezogen. Das bedeutet:
 
 ## 3. VPN-Landschaft
 
-### Was ist ein Site-to-Site VPN?
-Ein S2S-VPN verbindet zwei Netzwerke dauerhaft miteinander – z.B. Hamburg ↔ Berlin – sodass Server auf beiden Seiten miteinander kommunizieren können als wären sie im gleichen Netz.
-
 ### Aktive Site-to-Site Tunnel
 
 | Verbindung | Protokoll | Status | Besonderheit |
 |------------|-----------|--------|--------------|
 | Berlin ↔ Hamburg | IKEv2 | ✅ Stabil | Hauptverbindung zwischen den Standorten |
 | Berlin ↔ OMC | IKEv2 | ✅ Stabil | Über WatchGuard Berlin |
-| Hamburg ↔ OMC | IKEv2 | ✅ Stabil | Direktverbindung, stabil |
+| Hamburg ↔ OMC | IKEv2 | ✅ Stabil | Direktverbindung |
 | Hamburg ↔ Bürkert (neu) | IKEv2 | ✅ Aktiv | Remote: `10.40.0.0/16` |
 | Berlin ↔ Bürkert.1 | IKEv2 | ✅ Aktiv | Remote: `10.40.0.0/16` |
 | Berlin ↔ Bürkert.2 | IKEv1 | ✅ Aktiv | Remote: `192.168.120.x`, `192.168.151.x` |
-| Hamburg ↔ Sonic | IKEv2 | 🟡 Stage OK | Nur 1 Remote-Netz stabil (RV345P-Limit) |
-| Hamburg ↔ Tyczka | IKEv2 | 🟡 Eingeschränkt | Nur 1 Remote-Range gleichzeitig aktiv |
-| Hamburg ↔ Adacor | IKEv2 | ❌ Nicht funktional | RV345P unterstützt kein Local-NAT |
-| Berlin ↔ Tyczka | IKEv2 | ⚠ Offen | Remote-Regel falsch, PSK ausstehend |
+| Hamburg ↔ Sonic | IKEv2 | ✅ Erledigt | Christian Wenzel (Sonic) bestätigt am 18.12.2025 |
+| Hamburg ↔ Tyczka | IKEv2 | 🟡 Eingeschränkt | Nur 1 Remote-Range gleichzeitig (Cisco-Limit) – entfällt mit OPNSense |
+| Hamburg ↔ Adacor | IKEv2 | ❌ Nicht funktional | Kein Local-NAT am Cisco – entfällt mit OPNSense |
+| Berlin ↔ Tyczka | IKEv2 | ⚠ Offen | Remote-Regel falsch, PSK unklar. Ansprechpartner bei Tyczka: Marcel Cebulla |
+| Berlin ↔ Cornelsen | IKEv2 | ⚠ Prüfen | Testumgebung vom Netz genommen (Jan 2026) – Tunnel kann deaktiviert werden |
+| Berlin ↔ Dorma | IKEv2 | ⚠ Unklar | Dorma ist aktiver Kunde! Möglicherweise Ablösung durch WireGuard (Sven Mack weiß mehr) |
+| Berlin ↔ Sonic.2 | IKEv2 | ⚠ Prüfen | Ob sonic.2 (62.209.53.124) noch gebraucht wird, ist unklar |
 
-### Wichtige Einschränkung: Cisco RV345P
+### Wichtige Einschränkung: Cisco RV345P (temporär!)
 
-Der Cisco RV345P in Hamburg hat zwei bekannte Hardware-Limitierungen:
+Der Cisco RV345P hat bekannte Hardware-Limitierungen – diese entfallen nach dem Austausch durch die OPNSense DEC3852:
 
-1. **VPN-Clients (192.168.81.x) können nicht in S2S-Tunnel geroutet werden** – ein Client der per VPN in Hamburg eingewählt ist, kommt nicht automatisch nach Berlin oder OMC
-2. **Kein Local-NAT pro S2S-Tunnel** – deshalb funktioniert der Adacor-Tunnel nicht
+1. **VPN-Clients (192.168.81.x) können nicht in S2S-Tunnel geroutet werden**
+2. **Kein Local-NAT pro S2S-Tunnel** (Adacor-Problem)
+3. **Nur 1 SA bei Multi-Netz VPNs** (Tyczka-Problem)
+4. **Kein ESP-Forwarding** (verhinderte OPNSense-hinter-Cisco-Lösung)
 
-> **Hinweis:** Es ist geplant, den Cisco RV345P durch einen neuen Router zu ersetzen. In diesem Fall müssen alle bestehenden VPN-Konfigurationen übertragen werden. Ansprechpartner: Inan Bogisch (Konfiguration), bei Bedarf Leon Schumacher & Mathias Leonhardt.
-
-### Workaround für Entwickler
+### Workaround für Entwickler (bis OPNSense installiert ist)
 Wer auf alle Standorte zugreifen muss, verbindet sich mit **beiden VPNs gleichzeitig**:
 - **Cisco IPSec** → Hamburg (`192.168.80.x`)
 - **WatchGuard SSL-VPN** → Berlin + OMC (`192.168.1/2.x`, `10.20.30.x`)
-
-Linux-User können `vpnc` + WatchGuard parallel nutzen – funktioniert stabil.
 
 ---
 
@@ -90,27 +106,32 @@ Linux-User können `vpnc` + WatchGuard parallel nutzen – funktioniert stabil.
 
 | Aufgabe | Details | Ansprechpartner |
 |---------|---------|-----------------|
-| 14 Apache Proxy-Configs ohne Hamburg-Netz | `192.168.80.0/24` fehlt in IP-Whitelist → potenzielle „Forbidden"-Fehler bei Kunden | Mathias Leonhardt |
-| SSH auf DB-Server `192.168.80.26` nicht erreichbar | MySQL läuft, SSH nicht – Ursache unklar | Mathias Leonhardt |
-| 3 QNAPs physisch nicht auffindbar | Nur `.87`, `.92` (uninitialisiert) und `.254` (Veeam) antworten auf ARP | Inan Bogisch (vor Ort prüfen) |
+| DEC3852 bestellen | Phillip hat Go gegeben, Bestellung steht noch aus | Mathias Leonhardt |
+| 14 Apache Proxy-Configs ohne Hamburg-Netz | Bulk-Fix-Script aus README ausführen – Risiko minimal | Jeder mit SSH-Zugang zum DEV-Server |
+| Fruchthof Whitelisting | Jira-Ticket FNE-23618 (Daniel Jüdel) – kein E-Mail-Kontakt gefunden | Daniel Jüdel |
+| Indunorm Whitelisting | Ansprechpartner: Dirk Küppers (dirk.kueppers@indunorm.de) oder Joel Kretschmer (Joel.Kretschmer@hsr.de) | Mathias Leonhardt |
 
 ### 🟡 Mittel
 
 | Aufgabe | Details | Ansprechpartner |
 |---------|---------|-----------------|
-| Adacor-Tunnel | RV345P kann kein Local-NAT – neue Hardware nötig (DEC3842 oder OPNSense mit /29) | Mauro Altamura |
-| Tyczka ERP-Range aktivieren | Umschalten erfordert gleichzeitige Änderung durch Datagroup | Mauro Altamura |
-| Sonic: Live-Server stabiler anbinden | Aktuell nur Stage über 1 Remote-Netz stabil | Mauro Altamura |
-| Kunden-Whitelisting abschließen | Neue IP `31.172.106.157` noch nicht bei allen Kunden hinterlegt | Mathias Leonhardt |
+| SSH auf DB-Server `192.168.80.26` | MySQL läuft, SSH nicht. Prüfen ob VM auf ESXi → über vSphere-Konsole reingehen | Mathias Leonhardt |
+| 3 QNAPs physisch nicht auffindbar | Vor-Ort-Prüfung bei nächstem Hamburg-Besuch | Mathias Leonhardt |
+| QNAPs .87 und .92 konfigurieren | Vermutlich neue QNAPs von Dennis aufgestellt aber nie konfiguriert – als Backup-Ziele einrichten | Mathias Leonhardt |
+| Backup-Übersicht erstellen | Veeam-Jobs auf .254 prüfen, restic-Configs auf Servern checken | Mathias Leonhardt |
+| IBM Server Zugangsdaten | Mathias sucht noch – falls nicht gefunden: Konsole/IPMI Reset vor Ort | Mathias Leonhardt |
+| Tyczka ERP-Range aktivieren | Koordination über Marcel Cebulla → Datagroup (~1-2 Werktage Vorlauf) | Mauro Altamura |
+| Dorma VPN-Status klären | IPSec-Tunnel oder WireGuard-Ablösung? Sven Mack weiß mehr | Mauro Altamura / Sven Mack |
+| Cornelsen-Tunnel deaktivieren | Testumgebung vom Netz seit Jan 2026 – Tunnel auf WatchGuard prüfen | Mauro Altamura |
+| Sonic.2 prüfen | Wird 62.209.53.124 noch gebraucht? | Mauro Altamura |
 
 ### ⚪ Offen / Unklar
 
 | Aufgabe | Details | Ansprechpartner |
 |---------|---------|-----------------|
-| Cornelsen & Dorma VPN-Status | Kein bekannter Status in der Dokumentation | Mauro Altamura |
-| IBM Server falsche Static IP | Zugangsdaten benötigt | Mathias Leonhardt |
-| Backup-Strategie bestätigen | Veeam + restic – sind alle Jobs nach Umzug noch aktiv? | Mathias Leonhardt |
-| VPN-Monitoring einrichten | Aktuell nur manuelle Prüfung | Mathias Leonhardt |
+| Lederer & MK Whitelisting | Keine Rückmeldung bisher | Mathias Leonhardt |
+| VPN-Monitoring einrichten | OPNSense hat eingebaute Monitoring-Funktionen – wird nach DEC3852-Umstellung konfiguriert. Als Alternative wäre ein Ping-Script mit Slack-Alert möglich | Inan Bogisch (Vorschlag erwünscht) |
+| Bürkert-PSK Speicherort | Bewusst nicht im Repo – liegt vermutlich im Passwortmanager | Daniel Jüdel |
 
 ---
 
@@ -118,14 +139,14 @@ Linux-User können `vpnc` + WatchGuard parallel nutzen – funktioniert stabil.
 
 | Person | Rolle | Standort | Zuständig für |
 |--------|-------|----------|---------------|
-| **Mathias Leonhardt** | CTO & QMB | Hamburg | Gesamtkoordination, Entscheidungen |
-| **Sven Mack** | Head of Engineering | Hamburg | Software-Entwicklung |
+| **Mathias Leonhardt** | CTO & QMB | Hamburg | Gesamtkoordination, Entscheidungen, Hardware vor Ort |
+| **Sven Mack** | Head of Engineering | Hamburg | Software-Entwicklung, Dorma/WireGuard |
 | **Leon Schumacher** | Team Lead Software Engineering | Hamburg | Software-Entwicklung |
-| **Mauro Altamura** | VPN/Firewall | Berlin | WatchGuard, Cisco, OPNSense |
-| **Daniel Jüdel** | Team Lead DXP/Ibexa | Berlin | Bürkert-Projekt |
-| **Inan Bogisch** | SysAdmin (Werkstudent) | Hamburg | Hardware vor Ort, administrative Aufgaben mitverwalten – keine Entscheidungsgewalt oder Vollverantwortung |
+| **Mauro Altamura** | VPN/Firewall | Berlin | WatchGuard Berlin, VPN-Konfigurationen |
+| **Daniel Jüdel** | Team Lead DXP/Ibexa | Berlin | Bürkert-Projekt, Fruchthof |
+| **Inan Bogisch** | SysAdmin (Werkstudent) | Hamburg | Hardware vor Ort mitverwalten, administrative Aufgaben – keine Entscheidungsgewalt oder Vollverantwortung |
 
-> **Hinweis:** Dennis Rumpf wird in der AGENTS.md als Ansprechpartner für Hardware vor Ort genannt, ist jedoch seit März 2026 nicht mehr im Unternehmen. Er war sowohl als Entwickler als auch für VPN-Verwaltung und administrative Aufgaben zuständig. Ein Teil seiner administrativen Aufgaben wird seitdem von Inan Bogisch mitverwaltet.
+> **Hinweis:** Dennis Rumpf wird in der AGENTS.md als Ansprechpartner für Hardware vor Ort genannt, ist jedoch seit März 2026 nicht mehr im Unternehmen. Seine Hardware- und Admin-Aufgaben gehen an Mathias Leonhardt über, ein Teil wird von Inan Bogisch mitverwaltet.
 
 ---
 
@@ -145,18 +166,27 @@ Linux-User können `vpnc` + WatchGuard parallel nutzen – funktioniert stabil.
 | `RV345P_configuration_*.xml` | Cisco Hamburg Config |
 | `Server-Umzug-IPs.xlsx` | Kunden-Whitelisting Status |
 
+### Kunden-Whitelisting Status (Stand 05.03.2026)
+
+| Status | Kunden |
+|--------|--------|
+| ✅ Erledigt | Murexin, Hückmann, Depesche, Niehues, DLRG, Orthegroh, Cornelsen, Sonic, Tyczka |
+| ⏳ Keine Rückmeldung | Lederer, MK |
+| 🔴 Noch kontaktieren | Fruchthof, Indunorm |
+
 ### DEV-Server Zugang
 ```bash
 ssh devel@192.168.80.74
 ```
 Apache Proxy-Configs liegen unter `/etc/apache2/sites-enabled/`
 
+### WatchGuard Berlin
+Zugang über: `https://192.168.1.249:8080` (nur über VPN nach Berlin erreichbar)  
+→ Änderungen bitte nur durch Mauro Altamura!
+
 ---
 
 ## 7. Nützliche Befehle
-
-### VPN-Tunnel Status prüfen (auf OPNSense oder WatchGuard UI)
-Die Tunnel werden über die jeweiligen Web-UIs verwaltet, nicht per CLI.
 
 ### Apache Proxy-Config prüfen (DEV-Server)
 ```bash
