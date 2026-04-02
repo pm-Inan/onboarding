@@ -75,5 +75,11 @@ Mit dem `pm-admin` Account einloggen
 
 ---
 
+## Weitere Anleitungen
+
+- [Bootfähigen USB-Stick erstellen (Linux)](./bootfaehigen-usb-stick-erstellen.md)
+
+---
+
 ## Hinweise
 - Den **FileVault Recovery Key** (macOS) nach der Einrichtung in der [Geräteliste (Google Sheets)](https://docs.google.com) eintragen
