@@ -12,101 +12,168 @@ set -e
 # ============================================================
 log() { echo ""; echo ">>> $1"; echo ""; }
 
+is_installed() { dpkg -s "$1" &>/dev/null || snap list "$1" &>/dev/null 2>&1; }
+
+check_api_version() {
+    local version="$1"
+    local name="$2"
+    if [ -z "$version" ]; then
+        echo "FEHLER: Konnte Version für $name nicht ermitteln (API Rate-Limit oder Netzwerkfehler)."
+        exit 1
+    fi
+}
+
 # ============================================================
 # VORAUSSETZUNGEN
 # ============================================================
 install_preinstall() {
     log "System wird aktualisiert..."
     sudo apt update
-    sudo apt upgrade -y
-    sudo apt install curl wget -y
+    # Kein blindes upgrade – nur Sicherheitsupdates
+    sudo apt install -y unattended-upgrades
+    sudo unattended-upgrade -v
+    sudo apt install -y curl wget gnupg ca-certificates
 }
 
 # ============================================================
 # APPS INSTALLIEREN
 # ============================================================
 install_postman() {
+    if is_installed postman; then
+        log "Postman bereits installiert – überspringe."
+        return
+    fi
     log "Installiere Postman..."
     sudo snap install postman
 }
 
 install_github() {
-    log "Installiere GitHub Desktop..."
-    sudo apt install git -y
+    if is_installed github-desktop; then
+        log "GitHub Desktop bereits installiert – überspringe."
+        return
+    fi
+    log "Installiere Git & GitHub Desktop..."
+    sudo apt install -y git
 
-    # Aktuellste Version von GitHub Desktop ermitteln
-    GITHUB_VERSION=$(curl -s https://api.github.com/repos/shiftkey/desktop/releases/latest | grep -o '"tag_name": ".*"' | cut -d'"' -f4 | sed 's/release-//')
-    wget "https://github.com/shiftkey/desktop/releases/download/release-${GITHUB_VERSION}/GitHubDesktop-linux-${GITHUB_VERSION}.deb" -O /tmp/github-desktop.deb
-    sudo apt install gdebi-core -y
-    sudo gdebi /tmp/github-desktop.deb -n
-    rm /tmp/github-desktop.deb
+    # GitHub Desktop via APT-Repository (shiftkey) – immer aktuellste Version
+    wget -qO - https://apt.packages.shiftkey.dev/gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/shiftkey-packages.gpg > /dev/null
+    sudo sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/shiftkey-packages.gpg] https://apt.packages.shiftkey.dev/ubuntu/ any main" > /etc/apt/sources.list.d/shiftkey-packages.list'
+    sudo apt update
+    sudo apt install -y github-desktop
 }
 
 install_google_chrome() {
+    if is_installed google-chrome-stable; then
+        log "Google Chrome bereits installiert – überspringe."
+        return
+    fi
     log "Installiere Google Chrome..."
     wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/google-chrome.deb
-    sudo dpkg -i /tmp/google-chrome.deb
+    # apt statt dpkg – zieht fehlende Abhängigkeiten automatisch nach
+    sudo apt install -y /tmp/google-chrome.deb
     rm /tmp/google-chrome.deb
 
     # Chrome kurz starten damit Profilordner erstellt wird
-    google-chrome &
-    sleep 2
+    google-chrome --headless --disable-gpu about:blank &
+    sleep 3
     killall google-chrome || true
 }
 
 install_openvpn() {
+    if is_installed openvpn; then
+        log "OpenVPN bereits installiert – überspringe."
+        return
+    fi
     log "Installiere OpenVPN..."
-    sudo apt-get install openvpn -y
+    sudo apt install -y openvpn
 }
 
 install_slack() {
+    if is_installed slack-desktop; then
+        log "Slack bereits installiert – überspringe."
+        return
+    fi
     log "Installiere Slack..."
     curl -fsSL https://packagecloud.io/slacktechnologies/slack/gpgkey | gpg --dearmor | sudo tee /usr/share/keyrings/slack-archive-keyring.gpg > /dev/null
     echo "deb [signed-by=/usr/share/keyrings/slack-archive-keyring.gpg] https://packagecloud.io/slacktechnologies/slack/debian/ jessie main" | sudo tee /etc/apt/sources.list.d/slack.list
     sudo apt update
-    sudo apt install slack-desktop -y
+    sudo apt install -y slack-desktop
 }
 
 install_flameshot() {
+    if is_installed flameshot; then
+        log "Flameshot bereits installiert – überspringe."
+        return
+    fi
     log "Installiere Flameshot..."
-    sudo apt install flameshot -y
+    sudo apt install -y flameshot
 }
 
 install_filezilla() {
+    if is_installed filezilla; then
+        log "FileZilla bereits installiert – überspringe."
+        return
+    fi
     log "Installiere FileZilla..."
-    sudo apt install filezilla -y
+    sudo apt install -y filezilla
 }
 
 install_zsh() {
-    log "Installiere ZSH..."
-    sudo apt install zsh -y
-    yes | sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+    if is_installed zsh; then
+        log "ZSH bereits installiert – überspringe."
+        return
+    fi
+    log "Installiere ZSH & Oh-My-Zsh..."
+    sudo apt install -y zsh
+    # RUNZSH=no verhindert dass Oh-My-Zsh die Session wechselt und das Script abbricht
+    RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+    # ZSH als Standard-Shell setzen
+    sudo chsh -s "$(which zsh)" "$USER"
 }
 
 install_vscode() {
+    if is_installed code; then
+        log "VS Code bereits installiert – überspringe."
+        return
+    fi
     log "Installiere VS Code..."
     sudo snap install --classic code
 }
 
 install_composer() {
-    log "Installiere Composer..."
-    sudo apt install php-cli unzip -y
+    if command -v composer &>/dev/null; then
+        log "Composer bereits installiert – überspringe."
+        return
+    fi
+    log "Installiere PHP & Composer..."
+    # Explizite PHP-Version statt generischem php-cli
+    sudo apt install -y php8.3-cli unzip
     curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php
     sudo php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
     rm /tmp/composer-setup.php
 }
 
 install_ferdium() {
+    if is_installed ferdium; then
+        log "Ferdium bereits installiert – überspringe."
+        return
+    fi
     log "Installiere Ferdium..."
     FERDIUM_VERSION=$(curl -s https://api.github.com/repos/ferdium/ferdium-app/releases/latest | grep -o '"tag_name": ".*"' | cut -d'"' -f4 | sed 's/v//')
+    check_api_version "$FERDIUM_VERSION" "Ferdium"
     wget "https://github.com/ferdium/ferdium-app/releases/download/v${FERDIUM_VERSION}/Ferdium-linux-${FERDIUM_VERSION}-amd64.deb" -O /tmp/ferdium.deb
-    sudo apt install /tmp/ferdium.deb -y
+    sudo apt install -y /tmp/ferdium.deb
     rm /tmp/ferdium.deb
 }
 
 install_nvm() {
+    if [ -d "$HOME/.nvm" ]; then
+        log "NVM bereits installiert – überspringe."
+        return
+    fi
     log "Installiere NVM..."
     NVM_VERSION=$(curl -s https://api.github.com/repos/nvm-sh/nvm/releases/latest | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    check_api_version "$NVM_VERSION" "NVM"
     curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" | bash
 
     # NVM in aktuelle Session laden
@@ -118,40 +185,64 @@ install_nvm() {
 }
 
 install_sublime() {
+    if is_installed sublime-text; then
+        log "Sublime Text bereits installiert – überspringe."
+        return
+    fi
     log "Installiere Sublime Text..."
     wget -qO - https://download.sublimetext.com/sublimehq-pub.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/sublimehq-archive.gpg > /dev/null
     echo "deb https://download.sublimetext.com/ apt/stable/" | sudo tee /etc/apt/sources.list.d/sublime-text.list
     sudo apt update
-    sudo apt install sublime-text -y
+    sudo apt install -y sublime-text
 }
 
 install_jetbrains_toolbox() {
+    if [ -f "/opt/jetbrains/jetbrains-toolbox" ]; then
+        log "JetBrains Toolbox bereits installiert – überspringe."
+        return
+    fi
     log "Installiere JetBrains Toolbox..."
-    sudo apt install libfuse2 -y
+    sudo apt install -y libfuse2
 
-    # Aktuellste Version ermitteln
     JB_URL=$(curl -s "https://data.services.jetbrains.com/products/releases?code=TBA&latest=true&type=release" | grep -o '"linux":{"link":"[^"]*"' | cut -d'"' -f4)
+    check_api_version "$JB_URL" "JetBrains Toolbox"
     wget "$JB_URL" -O /tmp/jetbrains-toolbox.tar.gz
     sudo tar -xzf /tmp/jetbrains-toolbox.tar.gz -C /opt/
     sudo mv /opt/jetbrains-toolbox-* /opt/jetbrains
     rm /tmp/jetbrains-toolbox.tar.gz
 
-    log "Öffne JetBrains Toolbox..."
-    /opt/jetbrains/jetbrains-toolbox &
+    log "JetBrains Toolbox installiert. Bitte nach dem Neustart manuell starten: /opt/jetbrains/jetbrains-toolbox"
 }
 
 install_displaylink() {
+    if is_installed displaylink-driver; then
+        log "DisplayLink bereits installiert – überspringe."
+        return
+    fi
     log "Installiere DisplayLink..."
     sudo apt update
-    curl -o /tmp/synaptics-repository-keyring.deb https://www.synaptics.com/sites/default/files/Ubuntu/pool/stable/main/all/synaptics-repository-keyring.deb
-    sudo apt install /tmp/synaptics-repository-keyring.deb -y
-    sudo apt install displaylink-driver -y
+
+    # Keyring-URL dynamisch von der Synaptics-Seite ermitteln
+    SYNAPTICS_DEB_URL=$(curl -s https://www.synaptics.com/products/displaylink-graphics/downloads/ubuntu | grep -o 'https://[^"]*synaptics-repository-keyring[^"]*\.deb' | head -1)
+    if [ -z "$SYNAPTICS_DEB_URL" ]; then
+        # Fallback auf bekannte URL
+        SYNAPTICS_DEB_URL="https://www.synaptics.com/sites/default/files/Ubuntu/pool/stable/main/all/synaptics-repository-keyring.deb"
+        log "Warnung: Konnte Synaptics-URL nicht dynamisch ermitteln, verwende Fallback-URL."
+    fi
+    curl -o /tmp/synaptics-repository-keyring.deb "$SYNAPTICS_DEB_URL"
+    sudo apt install -y /tmp/synaptics-repository-keyring.deb
+    sudo apt update
+    sudo apt install -y displaylink-driver
     rm /tmp/synaptics-repository-keyring.deb
 }
 
 install_docker() {
+    if is_installed docker-ce; then
+        log "Docker bereits installiert – überspringe."
+        return
+    fi
     log "Installiere Docker..."
-    sudo apt-get install ca-certificates curl gnupg -y
+    sudo apt-get install -y ca-certificates curl gnupg
 
     sudo install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -161,7 +252,7 @@ install_docker() {
         sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
     sudo apt-get update
-    sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
     # Docker Gruppe einrichten
     if ! getent group docker > /dev/null; then
@@ -322,4 +413,7 @@ install_docker
 install_displaylink
 
 log "Einrichtung abgeschlossen!"
-echo "Hinweis: Bitte neu starten damit Docker und NVM korrekt geladen werden."
+echo ""
+echo "Hinweise:"
+echo "  - Bitte neu starten damit Docker, NVM und ZSH korrekt geladen werden."
+echo "  - JetBrains Toolbox manuell starten: /opt/jetbrains/jetbrains-toolbox"
