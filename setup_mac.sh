@@ -9,11 +9,6 @@
 set -e
 
 # ============================================================
-# KONFIGURATION
-# ============================================================
-ADMIN_USER="admin"
-
-# ============================================================
 # HILFSFUNKTIONEN
 # ============================================================
 log() { echo ""; echo ">>> $1"; echo ""; }
@@ -22,34 +17,34 @@ install_homebrew() {
     if ! command -v brew &> /dev/null; then
         log "Homebrew wird installiert..."
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        eval "$(/opt/homebrew/bin/brew shellenv)"
-        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+
+        # Apple Silicon und Intel Macs unterstützen
+        if [ -f /opt/homebrew/bin/brew ]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+        elif [ -f /usr/local/bin/brew ]; then
+            eval "$(/usr/local/bin/brew shellenv)"
+            echo 'eval "$(/usr/local/bin/brew shellenv)"' >> ~/.zprofile
+        else
+            echo "FEHLER: Homebrew Installation nicht gefunden."
+            exit 1
+        fi
     else
         log "Homebrew bereits installiert."
     fi
+
+    log "Homebrew wird aktualisiert..."
+    brew update
 }
 
 install_app() {
-    if ! brew list --cask "$1" &> /dev/null; then
-        log "Installiere $1..."
-        brew install --cask "$1"
+    local app="$1"
+    if brew list --cask "$app" &>/dev/null || brew list "$app" &>/dev/null; then
+        log "$app bereits installiert – überspringe."
     else
-        log "$1 bereits installiert."
+        log "Installiere $app..."
+        brew install --cask "$app"
     fi
-}
-
-# ============================================================
-# ADMIN VERSTECKEN
-# ============================================================
-hide_admin() {
-    if dscl . read "/Users/$ADMIN_USER" IsHidden 2>/dev/null | grep -q "1"; then
-        log "Admin-Account ist bereits versteckt."
-        return
-    fi
-
-    log "Admin-Account wird versteckt..."
-    sudo dscl . create "/Users/$ADMIN_USER" IsHidden 1
-    log "Admin-Account '$ADMIN_USER' erfolgreich versteckt."
 }
 
 # ============================================================
@@ -60,6 +55,7 @@ configure_system() {
 
     # Gastaccount deaktivieren
     sudo defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool NO
+
     # Automatische Updates aktivieren
     sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool YES
     sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool YES
@@ -73,22 +69,34 @@ configure_system() {
 check_filevault() {
     if fdesetup status | grep -q "FileVault is On"; then
         log "FileVault ist bereits aktiv."
-    else
-        log "FileVault ist nicht aktiv – wird aktiviert..."
-        FILEVAULT_KEY=$(sudo fdesetup enable | grep -o '[A-Z0-9-]*')
-        echo ""
-        echo "======================================================"
-        echo "  WICHTIG: FileVault Recovery Key sicher speichern!"
-        echo "  $FILEVAULT_KEY"
-        echo "======================================================"
-        echo ""
-        read -p "Recovery Key gespeichert? (Enter zum Fortfahren)"
+        return
     fi
+
+    log "FileVault ist nicht aktiv – wird aktiviert..."
+    # Key zuverlässig aus der letzten Zeile der fdesetup-Ausgabe extrahieren
+    FILEVAULT_OUTPUT=$(sudo fdesetup enable)
+    FILEVAULT_KEY=$(echo "$FILEVAULT_OUTPUT" | tail -1)
+
+    echo ""
+    echo "======================================================"
+    echo "  WICHTIG: FileVault Recovery Key sicher speichern!"
+    echo "  $FILEVAULT_KEY"
+    echo "======================================================"
+    echo ""
+    read -p "Recovery Key gespeichert? (Enter zum Fortfahren)"
 }
 
 # ============================================================
 # CHROME BOOKMARKS SETZEN
 # ============================================================
+open_and_close_chrome() {
+    log "Chrome wird kurz gestartet um Profilordner anzulegen..."
+    open -a "Google Chrome"
+    sleep 5
+    osascript -e 'quit app "Google Chrome"'
+    sleep 1
+}
+
 set_chrome_bookmarks() {
     log "Chrome Bookmarks werden gesetzt..."
 
@@ -207,23 +215,26 @@ set_chrome_bookmarks() {
     log "Chrome Bookmarks gesetzt."
 }
 
-open_and_close_chrome() {
-    open -a "Google Chrome"
-    sleep 2
-    osascript -e 'quit app "Google Chrome"'
-}
-
 # ============================================================
 # APPS INSTALLIEREN
 # ============================================================
 install_apps() {
     log "Apps werden installiert..."
-    install_app "slack"
-    install_app "google-chrome"
-    install_app "microsoft-teams"
-    install_app "tunnelblick"
-    install_app "firefox"
-    install_app "jabra-direct"
+
+    # Alle Casks in einem Aufruf – deutlich schneller als einzelne Aufrufe
+    CASKS=(
+        slack
+        google-chrome
+        microsoft-teams
+        tunnelblick
+        firefox
+        jabra-direct
+    )
+
+    for cask in "${CASKS[@]}"; do
+        install_app "$cask"
+    done
+
     log "App-Installation abgeschlossen."
 }
 
@@ -232,7 +243,6 @@ install_apps() {
 # ============================================================
 log "Mac Einrichtung startet..."
 
-hide_admin
 configure_system
 check_filevault
 install_homebrew
@@ -241,4 +251,7 @@ open_and_close_chrome
 set_chrome_bookmarks
 
 log "Einrichtung abgeschlossen!"
-echo "Der Mac ist fertig eingerichtet."
+echo ""
+echo "Hinweise:"
+echo "  - Bitte Mac neu starten damit alle Systemänderungen wirksam werden."
+echo "  - FileVault-Verschlüsselung läuft im Hintergrund weiter bis abgeschlossen."
